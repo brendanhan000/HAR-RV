@@ -46,3 +46,37 @@ transaction_costs:                # Phase 4 only
   option_bid_ask_vega: 0.02       # $/vega round-trip
   slippage_bps: 5
   financing_rate_annual: 0.05
+
+# Phase A — convex (true short-gamma) P&L model.
+# Replaces the vega-linear proxy with a Black-Scholes short ATM straddle that is
+# repriced along the realized price/vol path so losses grow ~quadratically with
+# move size. Everything here is config-driven and reproducible.
+convex_pnl:
+  position_type: "straddle"       # ATM straddle = canonical short-vol position
+  hold_days: 22                   # hold each straddle this many trading days (== horizon)
+  tenor_buffer_days: 2            # option tenor = hold_days + buffer; close with buffer days
+                                  # left so we never mark a τ→0 gamma singularity
+  iv_mark: "vix"                  # "vix": mark implied vol to VIX_t daily (live vega P&L)
+                                  #        "entry": freeze IV at entry (no vega P&L)
+  ladder_daily: false             # false: ONE straddle, rolled at horizon & re-struck on
+                                  # signal flips (how vol is actually traded; isolates the
+                                  # effect of convexity from turnover). true: open one unit
+                                  # each active day (overlapping ladder) — a turnover stress test.
+  vega_notional: 1.0              # per-straddle sizing: P&L units per 1.00 change in vol
+  risk_free_rate: 0.0             # BS r; 0 keeps the delta hedge free of spurious carry
+  dividend_yield: 0.0             # SPY prices are total-return adjusted → q handled, keep 0
+  # --- realistic, convex-aware costs ---
+  option_bid_ask_vol: 0.01        # round-trip option spread in IMPLIED-VOL points (1 pt=0.01)
+  stress_spread_mult: 3.0         # bid-ask widens ×this when VIX_t > stress_vix_level
+  stress_vix_level: 30.0          # fixed (no-look-ahead) VIX cutoff for stressed spreads
+  underlying_slippage_bps: 1.0    # slippage on delta-hedge share trades (bps of notional)
+  hedge_cost: true                # charge the cost of delta hedging
+
+# Phase C — the benchmark that matters: "sell vol when VIX is elevated".
+# Both the baseline (on VIX) and the HAR-VRP signal (on VRP) use these ROLLING,
+# point-in-time percentile thresholds, so neither gets a full-sample look-ahead edge.
+baseline:
+  signal_window: 756              # rolling lookback for the percentile (~3 trading years)
+  signal_min_periods: 252         # require >=1y of history before a signal can fire
+  short_percentile: 75            # short vol when the variable > its rolling Nth pct
+  long_percentile: 25             # (symmetric HAR-VRP only) long vol when < this pct
