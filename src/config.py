@@ -69,6 +69,31 @@ class TransactionCostsConfig:
 
 
 @dataclass
+class ConvexPnLConfig:
+    position_type: str
+    hold_days: int
+    tenor_buffer_days: int
+    iv_mark: str
+    ladder_daily: bool
+    vega_notional: float
+    risk_free_rate: float
+    dividend_yield: float
+    option_bid_ask_vol: float
+    stress_spread_mult: float
+    stress_vix_level: float
+    underlying_slippage_bps: float
+    hedge_cost: bool
+
+
+@dataclass
+class BaselineConfig:
+    signal_window: int
+    signal_min_periods: int
+    short_percentile: float
+    long_percentile: float
+
+
+@dataclass
 class Config:
     random_seed: int
     data: DataConfig
@@ -76,12 +101,16 @@ class Config:
     har: HARConfig
     walk_forward: WalkForwardConfig
     transaction_costs: TransactionCostsConfig
+    convex_pnl: Optional[ConvexPnLConfig] = None
+    baseline: Optional[BaselineConfig] = None
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
     with open(path) as f:
         raw = yaml.safe_load(f)
 
+    convex = raw.get("convex_pnl")
+    baseline = raw.get("baseline")
     return Config(
         random_seed=raw["random_seed"],
         data=DataConfig(**raw["data"]),
@@ -89,4 +118,6 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         har=HARConfig(**raw["har"]),
         walk_forward=WalkForwardConfig(**raw["walk_forward"]),
         transaction_costs=TransactionCostsConfig(**raw["transaction_costs"]),
+        convex_pnl=ConvexPnLConfig(**convex) if convex else None,
+        baseline=BaselineConfig(**baseline) if baseline else None,
     )
