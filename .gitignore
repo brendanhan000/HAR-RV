@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.parquet
+outputs/figures/*.png
+outputs/tables/
+.env
+*.egg-info/
+dist/
