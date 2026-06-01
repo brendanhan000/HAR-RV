@@ -93,6 +93,66 @@ class BaselineConfig:
     long_percentile: float
 
 
+# --- Sizing overlay (reusable layer) ---------------------------------------
+
+
+@dataclass
+class RiskConfig:
+    """Point-in-time risk estimator settings (priors, NOT backtest-tuned)."""
+    estimator: str                # "ewma" | "rolling"
+    window: int                   # rolling-window lookback (periods)
+    rolling_min_periods: int
+    ewma_halflife: float          # EWMA half-life (periods)
+    ewma_lambda: Optional[float]  # RiskMetrics decay; overrides halflife if set
+    ewma_min_periods: int
+    demean: bool                  # False = zero-mean RMS (RiskMetrics); True = centred std
+    ddof: int                     # only used when demean=True
+    annualize: bool
+    periods_per_year: int
+    vol_floor: float              # estimator stays honest; rules clamp (Phase 2)
+
+
+@dataclass
+class CovarianceConfig:
+    """Multi-position covariance settings (gated off for single-strategy use)."""
+    method: str                   # "ledoit_wolf" | "sample"
+    window: int
+    min_periods: int
+    annualize: bool = True
+    periods_per_year: int = 252
+
+
+@dataclass
+class RulesConfig:
+    """Sizing-rule settings. Vol target & Kelly fraction are PRIORS, not backtest-tuned."""
+    method: str                       # base leverage rule: "vol_target" | "kelly"
+    condition_on_active: bool         # estimate the strategy's risk on in-position days only
+                                      # (a frequently-flat strategy's raw-stream vol collapses to
+                                      # ~0 in flat stretches -> naive leverage spikes at re-entry)
+    reference_capital: float          # notional the P&L is measured against (sets gross scale)
+    target_vol: float                 # annualised vol target (stream units; 0.10 = 10% for %-returns)
+    vol_floor_frac: float             # floor sigma_hat at this * target_vol (flat-stretch guard)
+    max_leverage: float
+    kelly_fraction: float             # default 1/4; never full
+    kelly_edge_window: Optional[int]  # None = expanding-mean edge
+    cap_enabled: bool
+    cap_fraction: float               # one adverse session <= this fraction of annual expected P&L
+    cap_loss_sigma: float             # adverse session loss per unit = this * daily sigma_hat
+    annual_expected_pnl: Optional[float]  # None = point-in-time estimate; else absolute override
+    brake_enabled: bool
+    brake_threshold: float
+    brake_floor: float
+    brake_max_dd: float
+    turnover_cost_per_unit: float
+
+
+@dataclass
+class SizingConfig:
+    risk: RiskConfig
+    covariance: Optional[CovarianceConfig] = None
+    rules: Optional[RulesConfig] = None
+
+
 @dataclass
 class Config:
     random_seed: int
@@ -103,6 +163,18 @@ class Config:
     transaction_costs: TransactionCostsConfig
     convex_pnl: Optional[ConvexPnLConfig] = None
     baseline: Optional[BaselineConfig] = None
+    sizing: Optional[SizingConfig] = None
+
+
+def _build_sizing(raw_sizing: Optional[dict]) -> Optional[SizingConfig]:
+    if not raw_sizing:
+        return None
+    risk = RiskConfig(**raw_sizing["risk"])
+    cov_raw = raw_sizing.get("covariance")
+    cov = CovarianceConfig(**cov_raw) if cov_raw else None
+    rules_raw = raw_sizing.get("rules")
+    rules = RulesConfig(**rules_raw) if rules_raw else None
+    return SizingConfig(risk=risk, covariance=cov, rules=rules)
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
@@ -120,4 +192,5 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         transaction_costs=TransactionCostsConfig(**raw["transaction_costs"]),
         convex_pnl=ConvexPnLConfig(**convex) if convex else None,
         baseline=BaselineConfig(**baseline) if baseline else None,
+        sizing=_build_sizing(raw.get("sizing")),
     )

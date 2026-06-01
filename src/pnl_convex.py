@@ -232,6 +232,11 @@ def run_convex_backtest(
             rows.append(_empty_row(t))
             continue
         sig_t = float(signal.iloc[i]) if np.isfinite(signal.iloc[i]) else 0.0
+        # A continuous position carries SIZE in its magnitude (leverage) and DIRECTION in its
+        # sign. {-1,0,+1} is the special case leverage==1, so this is backward compatible:
+        # the sizing overlay feeds w_t*signal_t to size the straddle at entry/roll.
+        sgn_t = float(np.sign(sig_t))
+        lev_t = abs(sig_t)
         spread_t = _spread_volpts(float(V.iloc[i]), cfg)
 
         day_gross = 0.0
@@ -292,7 +297,7 @@ def run_convex_backtest(
 
             # close on roll (horizon reached) or, in single-position mode, a signal flip/flat
             roll_due = st.days_left <= 0
-            flip = single_position and (st.sign != sig_t)
+            flip = single_position and (st.sign != sgn_t)
             if roll_due or flip:
                 day_opt_cost += st.n * gk_now["vega"] * (spread_t * 0.5)  # close = half round-trip
                 if delta_hedge and cp.hedge_cost:
@@ -304,17 +309,18 @@ def run_convex_backtest(
         # ---- 2) open a new straddle ----
         #   ladder mode : one new straddle each active day (overlapping book)
         #   single mode : open only when flat (covers initial entry, rolls, and flips)
-        if sig_t != 0.0 and (cp.ladder_daily or len(book) == 0):
+        if sgn_t != 0.0 and (cp.ladder_daily or len(book) == 0):
             tau0 = tenor_days / 252.0
             K = S_t  # ATM (spot)
             gk0 = straddle_greeks(S_t, K, tau0, sigma_t, r, q)
-            # size to target vega notional: n * vega(per 1.00 vol) * 0.01 = vega_notional per vol-pt
+            # size to target vega notional, scaled by the position's leverage at entry:
+            #   n * vega(per 1.00 vol) * 0.01 = lev * vega_notional per vol-pt
             vega_per_volpt = gk0["vega"] * 0.01
-            n = cp.vega_notional / vega_per_volpt if vega_per_volpt > 0 else 0.0
+            n = lev_t * cp.vega_notional / vega_per_volpt if vega_per_volpt > 0 else 0.0
             V0 = straddle_price(S_t, K, tau0, sigma_t, r, q)
-            hedge0 = sig_t * n * gk0["delta"] if delta_hedge else 0.0
+            hedge0 = sgn_t * n * gk0["delta"] if delta_hedge else 0.0
             book.append(_Straddle(
-                sign=sig_t, K=K, n=n, days_left=hold_days, tau=tau0,
+                sign=sgn_t, K=K, n=n, days_left=hold_days, tau=tau0,
                 S_prev=S_t, sigma_prev=sigma_t, V_prev=V0, hedge_shares=hedge0,
                 sigma_entry=sigma_t,
             ))
