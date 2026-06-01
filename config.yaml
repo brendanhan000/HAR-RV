@@ -80,3 +80,18 @@ baseline:
   signal_min_periods: 252         # require >=1y of history before a signal can fire
   short_percentile: 75            # short vol when the variable > its rolling Nth pct
   long_percentile: 25             # (symmetric HAR-VRP only) long vol when < this pct
+
+# Signal-validation study — adversarial OOS test of four live signals through the harness.
+# Each signal has a STRICT never-seen holdout; thresholds are PRIORS, not tuned to holdout.
+signals:
+  holdout_fdr: 0.05               # Benjamini-Hochberg FDR across the four signals
+  spread:                         # Signal 1 — USO/BNO (WTI-Brent) beta-adjusted z-score
+    uso_file: "uso_daily.parquet"
+    bno_file: "bno_daily.parquet"
+    holdout_start: "2023-01-01"   # dev 2010-06..2022-12 (contaminated); OOS 2023-01..2025-05
+    beta_window: 252              # 1y rolling cointegration hedge ratio (point-in-time)
+    z_window: 60                  # ~3-month rolling z-score window
+    z_entry: 2.0                  # enter at |z|>2  (standard pairs-trade prior)
+    z_exit: 0.5                   # exit at |z|<0.5 (reverted toward the mean)
+    one_way_bps: 5.0              # one-way ETF cost per leg (bps) — conservative for BNO illiquidity
+    ou_window: 252                # rolling OU half-life / ADF cointegration diagnostics

@@ -93,6 +93,30 @@ class BaselineConfig:
     long_percentile: float
 
 
+# --- Signal-validation study (each signal gets its own config block) ---
+
+
+@dataclass
+class SpreadConfig:
+    """Signal 1 — USO/BNO beta-adjusted z-score OU mean-reversion. Thresholds are PRIORS
+    (standard pairs-trade values), fixed on dev-period reasoning, NOT tuned to the holdout."""
+    uso_file: str
+    bno_file: str
+    holdout_start: str         # strict never-seen OOS begins here; before = dev/in-sample
+    beta_window: int           # rolling hedge-ratio (cointegration) window
+    z_window: int              # rolling z-score window
+    z_entry: float             # enter when |z| > this
+    z_exit: float              # exit to flat when |z| < this
+    one_way_bps: float         # one-way ETF transaction cost per leg (bps of notional)
+    ou_window: int             # window for rolling OU half-life / ADF diagnostics
+
+
+@dataclass
+class SignalsConfig:
+    holdout_fdr: float = 0.05  # Benjamini-Hochberg FDR across the four signals
+    spread: Optional[SpreadConfig] = None
+
+
 @dataclass
 class Config:
     random_seed: int
@@ -103,6 +127,15 @@ class Config:
     transaction_costs: TransactionCostsConfig
     convex_pnl: Optional[ConvexPnLConfig] = None
     baseline: Optional[BaselineConfig] = None
+    signals: Optional[SignalsConfig] = None
+
+
+def _build_signals(raw_signals: Optional[dict]) -> Optional[SignalsConfig]:
+    if not raw_signals:
+        return None
+    spread_raw = raw_signals.get("spread")
+    spread = SpreadConfig(**spread_raw) if spread_raw else None
+    return SignalsConfig(holdout_fdr=raw_signals.get("holdout_fdr", 0.05), spread=spread)
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
@@ -120,4 +153,5 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         transaction_costs=TransactionCostsConfig(**raw["transaction_costs"]),
         convex_pnl=ConvexPnLConfig(**convex) if convex else None,
         baseline=BaselineConfig(**baseline) if baseline else None,
+        signals=_build_signals(raw.get("signals")),
     )
