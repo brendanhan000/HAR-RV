@@ -194,3 +194,52 @@ class TestConvexEngine:
         a = base.daily_pnl.loc[base.daily_pnl.index < cutoff]
         b = shocked.daily_pnl.loc[shocked.daily_pnl.index < cutoff]
         np.testing.assert_allclose(a.values, b.values, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Continuous (leveraged) positions — the sizing overlay feeds w_t * signal_t.
+# Magnitude = leverage (straddle size at entry), sign = direction. {-1,0,+1}
+# is the leverage==1 special case, so the engine stays backward compatible.
+# ---------------------------------------------------------------------------
+
+
+class TestContinuousLeverage:
+    def _short_signal(self, idx):
+        return pd.Series(1.0, index=idx, name="signal")
+
+    def test_leverage_scales_pnl_linearly(self):
+        """A constant leverage k scales every day's P&L by exactly k (engine is linear in size)."""
+        cfg = _cfg()
+        fc, spy, vix = _synthetic_market()
+        sig = self._short_signal(fc.index)
+        base = run_convex_backtest(fc, spy, vix, cfg, signal=sig, label="1x")
+        for k in (0.5, 2.0, 3.0):
+            scaled = run_convex_backtest(fc, spy, vix, cfg, signal=k * sig, label=f"{k}x")
+            np.testing.assert_allclose(scaled.daily_pnl.values, k * base.daily_pnl.values, atol=1e-9)
+
+    def test_sign_separates_from_size(self):
+        """Direction lives in the sign: a long book mirrors the short book's GROSS P&L at any size."""
+        cfg = _cfg()
+        fc, spy, vix = _synthetic_market()
+        sig = self._short_signal(fc.index)
+        short2 = run_convex_backtest(fc, spy, vix, cfg, signal=2.0 * sig)
+        long2 = run_convex_backtest(fc, spy, vix, cfg, signal=-2.0 * sig)
+        np.testing.assert_allclose(short2.gross_pnl.values, -long2.gross_pnl.values, atol=1e-9)
+
+    def test_zero_leverage_no_position(self):
+        cfg = _cfg()
+        fc, spy, vix = _synthetic_market()
+        flat = run_convex_backtest(fc, spy, vix, cfg, signal=pd.Series(0.0, index=fc.index))
+        assert flat.daily_pnl.abs().sum() == pytest.approx(0.0, abs=1e-12)
+
+    def test_leverage_at_entry_held_through_roll(self):
+        """Leverage is sampled at entry/roll (an options book is sized at entry, not daily).
+        Changing leverage AFTER entry but before a roll does not retroactively resize."""
+        cfg = _cfg(hold_days=22, tenor_buffer_days=2)
+        fc, spy, vix = _synthetic_market(n=40)
+        sig = pd.Series(1.0, index=fc.index)
+        sig.iloc[5:] = 2.0          # leverage doubles on day 5, but entry was day 0
+        r = run_convex_backtest(fc, spy, vix, cfg, signal=sig)
+        base = run_convex_backtest(fc, spy, vix, cfg, signal=pd.Series(1.0, index=fc.index))
+        # within the first hold window the position was opened at lev=1 -> identical to base there
+        np.testing.assert_allclose(r.daily_pnl.values[:20], base.daily_pnl.values[:20], atol=1e-9)

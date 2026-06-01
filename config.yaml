@@ -80,3 +80,67 @@ baseline:
   signal_min_periods: 252         # require >=1y of history before a signal can fire
   short_percentile: 75            # short vol when the variable > its rolling Nth pct
   long_percentile: 25             # (symmetric HAR-VRP only) long vol when < this pct
+
+# Sizing overlay (reusable layer). PHASE 1 here = the risk estimator only.
+# CARDINAL RULE: everything used to size period t uses data <= t-1 (lagged). These
+# are ESTIMATOR PRIORS, not backtest-tuned knobs — they describe how we measure the
+# strategy's own risk, not how aggressively we bet (that lives in the sizing rules).
+sizing:
+  risk:
+    estimator: "ewma"             # "ewma" | "rolling"
+    # rolling-window estimator
+    window: 63                    # ~3 months of trading days
+    rolling_min_periods: 63       # require a full window before emitting an estimate
+    # EWMA estimator (RiskMetrics-style recursion, adjust=False)
+    ewma_halflife: 21             # ~1 month; reacts faster than the 63d window
+    ewma_lambda: null             # optional RiskMetrics decay lambda (alpha=1-lambda);
+                                  # overrides halflife when set (e.g. 0.94 daily)
+    ewma_min_periods: 21          # require >= this many obs before emitting
+    # shared
+    demean: false                 # false = zero-mean RMS (RiskMetrics); true = centred std
+    ddof: 0                       # only used when demean=true
+    annualize: true               # return ANNUALISED vol (× sqrt(periods_per_year))
+    periods_per_year: 252
+    vol_floor: 0.0                # estimator returns the raw value; rules clamp (Phase 2)
+  covariance:                     # multi-position path ONLY (single-strategy never uses it)
+    method: "ledoit_wolf"         # "ledoit_wolf" (shrunk) | "sample"
+    window: 252                   # ~1y lookback for the covariance matrix
+    min_periods: 126
+    annualize: true
+    periods_per_year: 252
+    # STRETCH (not implemented): method "rmt" — Marchenko-Pastur eigenvalue denoising,
+    # worthwhile when #strategies approaches the lookback length.
+  rules:
+    # base leverage rule that drives sizing: "vol_target" | "kelly"
+    method: "vol_target"
+    condition_on_active: true     # estimate the strategy's risk on IN-POSITION days only. The
+                                  # baseline is flat 74% of days; on the raw zero-inflated stream
+                                  # trailing vol collapses to ~0 in flat stretches and naive
+                                  # leverage spikes right at re-entry. Set false for always-on
+                                  # strategies (no effect there).
+    reference_capital: 100.0      # notional the strategy's P&L is measured against -> the
+                                  # stream becomes a return (P&L/capital), so target_vol is a
+                                  # literal %. Sets GROSS SCALE only; Sharpe & DD/ann are
+                                  # invariant to it. Use 1.0 for a strategy already in % returns.
+                                  # 100 makes the baseline run near 1x at a 10% target (comparable
+                                  # to flat) — a presentational choice, not a tuned parameter.
+    # --- vol targeting (PRIOR, not backtest-tuned) ---
+    target_vol: 0.10              # 10% annualised vol target — a conventional institutional prior
+    vol_floor_frac: 0.25          # floor sigma_hat at 0.25*target_vol -> caps the flat-stretch
+                                  # leverage at 1/0.25 = 4x (the baseline is flat 74% of days)
+    max_leverage: 4.0             # absolute leverage ceiling from any rule
+    # --- fractional Kelly (PRIOR) ---
+    kelly_fraction: 0.25          # 1/4 Kelly. NEVER full — edge is estimated with error (ruin sim)
+    kelly_edge_window: null       # null = expanding-mean edge (stable); else a rolling window
+    # --- hard per-session cap (BINDING, applied LAST) ---
+    cap_enabled: true
+    cap_fraction: 0.05            # one adverse session may risk <= 5% of annual EXPECTED P&L
+    cap_loss_sigma: 3.0           # adverse 1-session loss per unit = 3 * daily sigma_hat (~99% VaR)
+    annual_expected_pnl: null     # null = point-in-time expanding-mean*252; else absolute override
+    # --- drawdown brake (OPTIONAL; off by default so its effect is attributable separately) ---
+    brake_enabled: false
+    brake_threshold: 0.20         # de-lever once sized-book drawdown (fraction of peak) > 20%
+    brake_floor: 0.25             # leverage multiplier floor reached at brake_max_dd
+    brake_max_dd: 0.40            # drawdown at which the brake multiplier hits its floor
+    # --- turnover (sizing changes cost money; Phase 3 calibrates this to the strategy) ---
+    turnover_cost_per_unit: 0.0   # cost charged per unit of |position change|
